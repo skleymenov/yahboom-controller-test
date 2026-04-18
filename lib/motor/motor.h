@@ -15,7 +15,7 @@ extern "C" {
 #define MOTOR_TIMER_RESOLUTION_HZ  10000000
 #define MOTOR_PWM_FREQ_HZ          25000
 #define MOTOR_DUTY_TICK_MAX        (MOTOR_TIMER_RESOLUTION_HZ / MOTOR_PWM_FREQ_HZ)  // 400
-#define MOTOR_DEAD_ZONE            200
+#define MOTOR_DEAD_ZONE            100
 #define MOTOR_MAX_SPEED            (MOTOR_DUTY_TICK_MAX - MOTOR_DEAD_ZONE)           // 200
 
 // ESP32-S3 has 2 MCPWM groups × 3 operators each.

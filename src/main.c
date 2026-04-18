@@ -10,6 +10,7 @@
 #include "button.h"
 #include "motor.h"
 #include "encoder.h"
+#include "wheel.h"
 
 static const char *TAG = "MAIN";
 
@@ -32,32 +33,44 @@ static const encoder_config_t k_encoders[] = {
     { BOARD_ENC_M4_HB, BOARD_ENC_M4_HA, BOARD_ENC_M4_HA, BOARD_ENC_M4_HB },
 };
 
+// ── Wheel PID config — motor_id / encoder_id match the arrays above ──────────
+// WHEEL_MAX_TPS: measure by spinning one free wheel at Motor_SetSpeed(200) for
+// one second and reading Encoder_GetCount.  Start conservatively — a value
+// that is 20% too low just means the FF slightly under-drives and the I-term
+// catches up quickly.  A value that is too high over-drives and the I-term
+// backs off, which is also fine but may cause brief overshoot at start.
+//
+// Gains: with feedforward doing the heavy lifting, keep Kp small (prevents
+// overshoot), Ki moderate (trims FF error in ~0.5 s), Kd near-zero.
+#define WHEEL_MAX_TPS  6000
+#define WHEEL_KP       0.02f
+#define WHEEL_KI       0.05f
+#define WHEEL_KD       0.001f
+
+static const wheel_config_t k_wheels[] = {
+    { 0, 0, WHEEL_KP, WHEEL_KI, WHEEL_KD, WHEEL_MAX_TPS },  // left  front
+    { 1, 1, WHEEL_KP, WHEEL_KI, WHEEL_KD, WHEEL_MAX_TPS },  // left  rear
+    { 2, 2, WHEEL_KP, WHEEL_KI, WHEEL_KD, WHEEL_MAX_TPS },  // right front
+    { 3, 3, WHEEL_KP, WHEEL_KI, WHEEL_KD, WHEEL_MAX_TPS },  // right rear
+};
+
 #define MOTOR_COUNT   (sizeof(k_motors)   / sizeof(k_motors[0]))
 #define ENCODER_COUNT (sizeof(k_encoders) / sizeof(k_encoders[0]))
+#define WHEEL_COUNT   (sizeof(k_wheels)   / sizeof(k_wheels[0]))
 
 // ── Square trajectory parameters ──────────────────────────────────────────────
 #define SQUARE_SIDE_TICKS  2048
-#define DRIVE_SPEED        (MOTOR_MAX_SPEED / 4)
+// Target speed in encoder ticks/second.  Tune alongside PID gains.
+#define DRIVE_SPEED_TPS    2000
 
 // Mecanum kinematic speed vectors (indices: 0=LF, 1=LR, 2=RF, 3=RR).
 // Each phase is a pure translation — the robot never rotates.
-static const int k_fwd[4]   = {  DRIVE_SPEED,  DRIVE_SPEED,  DRIVE_SPEED,  DRIVE_SPEED };
-static const int k_right[4] = {  DRIVE_SPEED,  0,  0,  DRIVE_SPEED };
-static const int k_bwd[4]   = { -DRIVE_SPEED, -DRIVE_SPEED, -DRIVE_SPEED, -DRIVE_SPEED };
-static const int k_left[4]  = { -DRIVE_SPEED,  0,  0, -DRIVE_SPEED };
-
-// During strafing half the encoders count positive and half negative, so use
-// the average of absolute values — this works for all four phases.
-static int drive_ticks(void)
-{
-    int total = 0;
-    for (int i = 0; i < 4; i++)
-    {
-        int c = Encoder_GetCount(i);
-        total += c < 0 ? -c : c;
-    }
-    return total / 4;
-}
+//   right strafe: LF+, LR−, RF−, RR+
+//   left  strafe: LF−, LR+, RF+, RR−
+static const int k_fwd[4]   = {  DRIVE_SPEED_TPS,  DRIVE_SPEED_TPS,  DRIVE_SPEED_TPS,  DRIVE_SPEED_TPS };
+static const int k_right[4] = {  DRIVE_SPEED_TPS, -DRIVE_SPEED_TPS, -DRIVE_SPEED_TPS,  DRIVE_SPEED_TPS };
+static const int k_bwd[4]   = { -DRIVE_SPEED_TPS, -DRIVE_SPEED_TPS, -DRIVE_SPEED_TPS, -DRIVE_SPEED_TPS };
+static const int k_left[4]  = { -DRIVE_SPEED_TPS,  DRIVE_SPEED_TPS,  DRIVE_SPEED_TPS, -DRIVE_SPEED_TPS };
 
 // ── Emergency stop flag set by BOOT button ────────────────────────────────────
 static volatile bool s_stopped = false;
@@ -72,7 +85,7 @@ static void boot_btn_cb(button_event_t event)
     s_stopped = !s_stopped;
     if (s_stopped)
     {
-        Motor_BrakeAll();
+        Wheel_StopAll();
         Led_StopBlink();
         Led_On();
         ESP_LOGI(TAG, "stopped");
@@ -89,30 +102,44 @@ static void boot_btn_cb(button_event_t event)
 static void user_btn_cb(button_event_t event)
 {
     if (event == BUTTON_EVENT_PRESSED)
-    {
-        Encoder_ClearAll();
-        ESP_LOGI(TAG, "encoders cleared");
-    }
+        ESP_LOGI(TAG, "speeds  %d  %d  %d  %d",
+                 Wheel_GetSpeed(0), Wheel_GetSpeed(1),
+                 Wheel_GetSpeed(2), Wheel_GetSpeed(3));
 }
 
 // ── Square trajectory task ────────────────────────────────────────────────────
-static void run_phase(const int *speeds, const char *label)
+// Progress is measured as the average absolute encoder delta from the phase
+// start — valid for both straight and strafe phases.
+static void run_phase(const int *speeds_tps, const char *label)
 {
-    Encoder_ClearAll();
-    Motor_SetSpeedAll(speeds);
+    int start[4];
+    for (int i = 0; i < 4; i++)
+        start[i] = Encoder_GetCount(i);
 
-    while (drive_ticks() < SQUARE_SIDE_TICKS)
+    Wheel_SetSpeedAll(speeds_tps);
+
+    while (1)
     {
         if (s_stopped)
         {
-            Motor_BrakeAll();
+            Wheel_StopAll();
             ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-            Motor_SetSpeedAll(speeds);
+            // Wheels were braked during pause, so start[] is still valid.
+            Wheel_SetSpeedAll(speeds_tps);
         }
+
+        int total = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            int d = Encoder_GetCount(i) - start[i];
+            total += d < 0 ? -d : d;
+        }
+        if (total / 4 >= SQUARE_SIDE_TICKS) break;
+
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    Motor_BrakeAll();
+    Wheel_StopAll();
     ESP_LOGI(TAG, "  %s done — enc %d %d %d %d", label,
              Encoder_GetCount(0), Encoder_GetCount(1),
              Encoder_GetCount(2), Encoder_GetCount(3));
@@ -136,7 +163,7 @@ static void square_task(void *arg)
 void app_main(void)
 {
     ESP_LOGI(TAG, "Starting yahboom-test");
-    ESP_LOGI(TAG, "BOOT button: pause/resume  |  USER button: clear encoders");
+    ESP_LOGI(TAG, "BOOT button: pause/resume  |  USER button: print speeds");
 
     Led_Init();
     Led_StartBlink(500);
@@ -146,6 +173,7 @@ void app_main(void)
 
     Motor_Init(k_motors, MOTOR_COUNT);
     Encoder_Init(k_encoders, ENCODER_COUNT);
+    Wheel_Init(k_wheels, WHEEL_COUNT, 20);
 
     xTaskCreate(square_task, "square", 3072, NULL, 5, &s_square_task_handle);
 }

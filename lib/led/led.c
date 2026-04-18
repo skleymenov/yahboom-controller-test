@@ -23,7 +23,7 @@ void Led_Init(void)
 {
     gpio_config_t io_conf = {
         .intr_type    = GPIO_INTR_DISABLE,
-        .mode         = GPIO_MODE_OUTPUT,
+        .mode         = GPIO_MODE_INPUT_OUTPUT,
         .pin_bit_mask = (1ULL << LED_GPIO),
         .pull_down_en = 0,
         .pull_up_en   = 0,
