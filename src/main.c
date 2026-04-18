@@ -11,6 +11,7 @@
 #include "motor.h"
 #include "encoder.h"
 #include "wheel.h"
+#include "lidar.h"
 
 static const char *TAG = "MAIN";
 
@@ -107,6 +108,20 @@ static void user_btn_cb(button_event_t event)
                  Wheel_GetSpeed(2), Wheel_GetSpeed(3));
 }
 
+// ── Lidar logging task ────────────────────────────────────────────────────────
+static void lidar_log_task(void *arg)
+{
+    lidar_cloud_t cloud;
+    while (1)
+    {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        Lidar_GetCloud(&cloud);
+        ESP_LOGI(TAG, "lidar  min %4u mm @ %6.1f°   max %5u mm @ %6.1f°",
+                 cloud.min_dist_mm, cloud.min_dist_angle,
+                 cloud.max_dist_mm, cloud.max_dist_angle);
+    }
+}
+
 // ── Square trajectory task ────────────────────────────────────────────────────
 // Progress is measured as the average absolute encoder delta from the phase
 // start — valid for both straight and strafe phases.
@@ -174,6 +189,8 @@ void app_main(void)
     Motor_Init(k_motors, MOTOR_COUNT);
     Encoder_Init(k_encoders, ENCODER_COUNT);
     Wheel_Init(k_wheels, WHEEL_COUNT, 20);
+    Lidar_Init(BOARD_LIDAR_UART_NUM, BOARD_LIDAR_TX_GPIO, BOARD_LIDAR_RX_GPIO);
 
-    xTaskCreate(square_task, "square", 3072, NULL, 5, &s_square_task_handle);
+    xTaskCreate(lidar_log_task, "lidar_log", 2048, NULL, 4, NULL);
+    xTaskCreate(square_task,    "square",    3072, NULL, 5, &s_square_task_handle);
 }

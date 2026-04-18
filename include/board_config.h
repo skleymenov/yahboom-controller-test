@@ -34,6 +34,11 @@
 #define BOARD_MOTOR_M3_GROUP    1
 #define BOARD_MOTOR_M4_GROUP    1
 
+// ── Lidar (MS200, UART1) ──────────────────────────────────────────────────────
+#define BOARD_LIDAR_UART_NUM    1   // UART_NUM_1
+#define BOARD_LIDAR_TX_GPIO     17
+#define BOARD_LIDAR_RX_GPIO     18
+
 // ── Encoders ─────────────────────────────────────────────────────────────────
 // M3 and M4 encoders have H-A/H-B swapped (same physical reason as motors).
 #define BOARD_ENC_M1_HA         6
