@@ -13,9 +13,10 @@ static TimerHandle_t s_blink_timer = NULL;
 
 static void blink_cb(TimerHandle_t timer)
 {
-    static bool on = false;
-    on = !on;
-    on ? Led_On() : Led_Off();
+    if (gpio_get_level(LED_GPIO) == LED_ACTIVE_LEVEL)
+        Led_Off();
+    else
+        Led_On();
 }
 
 void Led_Init(void)
