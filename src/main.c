@@ -111,7 +111,7 @@ static void user_btn_cb(button_event_t event)
 // ── Lidar logging task ────────────────────────────────────────────────────────
 static void lidar_log_task(void *arg)
 {
-    lidar_cloud_t cloud;
+    static lidar_cloud_t cloud;
     while (1)
     {
         vTaskDelay(pdMS_TO_TICKS(1000));
@@ -191,6 +191,6 @@ void app_main(void)
     Wheel_Init(k_wheels, WHEEL_COUNT, 20);
     Lidar_Init(BOARD_LIDAR_UART_NUM, BOARD_LIDAR_TX_GPIO, BOARD_LIDAR_RX_GPIO);
 
-    xTaskCreate(lidar_log_task, "lidar_log", 2048, NULL, 4, NULL);
+    xTaskCreate(lidar_log_task, "lidar_log", 3072, NULL, 4, NULL);
     xTaskCreate(square_task,    "square",    3072, NULL, 5, &s_square_task_handle);
 }
